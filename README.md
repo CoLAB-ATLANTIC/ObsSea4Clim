@@ -1,4 +1,4 @@
-# MHW DETECTION 3D Detection
+# MHW 3D DETECTION
 <div id="top"></div>
 
 <!-- PROJECT SHIELDS -->
