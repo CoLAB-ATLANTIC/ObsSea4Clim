@@ -21,7 +21,7 @@
 [website-shield]: https://img.shields.io/badge/-Website-black.svg?style=for-the-badge
 [website-url]: https://colabatlantic.com/
 
-**Summary:** Make a summary about your project that impacts the reader. Use a good image/screenshot so the reader recognizes the repo.
+**Summary:** Detect MHW zones from MHW pixel data (time, latitude, longitude).
 Use the `docs/Documentation.md` to get started.
 
 ![Image of Project](/images/logo_atlantic.png)
