@@ -140,13 +140,14 @@ def create_video_from_xarray(dataarray, output_video_filepath, value_range=None,
     render_video(output_video_filepath, frames, fps)
     del frames
 
-
+'''
 # EXAMPLE USAGE:
 
 #open xarray dataset
 ds_ehf = xr.open_dataset('/path/to/your/file.nc')
+var_name = 'your_var'
 #convert to datarray by selecting one variable. Select time range if needed
-datarray = ds_ehf.EHF.isel(time=slice(0, 50))
+datarray = ds_ehf[var_name].isel(time=slice(0, 50))
 
 create_video_from_xarray(datarray,
                           output_video_filepath='./xr2video_file.mp4',
@@ -154,3 +155,4 @@ create_video_from_xarray(datarray,
                               title=None,
                                fps=5, #bigger values will increase frame rate speed
                                 dist_range=False)
+'''
