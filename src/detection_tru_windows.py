@@ -19,11 +19,13 @@ def detection_tru_windows(ds, last_lbl):
     step_size = config.STEP_SIZE
 
     window_start_day = start_date
-    window_end_day = window_start_day + window_size #min(window_start_day + window_size, end_date)
+    window_end_day = window_start_day + window_size
 
     output_folder = config.OUTPUT_PATH
     video_folder = config.VIDEO_FOLDER
     os.makedirs(video_folder, exist_ok=True)
+
+    varname = FLAGS.varname
 
     """ if params.getp('reset'):
         if os.path.exists(mapping_dir): os.remove(mapping_dir)
@@ -37,20 +39,20 @@ def detection_tru_windows(ds, last_lbl):
 
         #detect mhws in current window
         current_window_nc = ds.sel(time = slice(window_start_day, window_end_day))
-        current_window = current_window_nc.intensity.values
+        current_window = current_window_nc[varname].values
         
         if DEBUG_MEMORY: utils.memory_print('before detect_mhws')
         current_window, last_lbl = det.detect_mhws_2d(current_window, last_lbl)
-        current_window_nc['mhw_label'] = (('time', 'lat', 'lon'), current_window)
-        current_window_nc = current_window_nc.drop_vars('intensity')
+        current_window_nc['label'] = (('time', 'y', 'x'), current_window)
+        current_window_nc = current_window_nc.drop_vars(varname)
         del current_window
         if DEBUG_MEMORY: utils.memory_print('after detect_mhws')
         
         if window_start_day != start_date:   
             #get overlap windows
             current_overlap = current_window_nc.sel(time = slice(overlap_start, overlap_end))
-            current_overlap = current_overlap['mhw_label'].values
-            previous_overlap = previous_overlap['mhw_label'].values
+            current_overlap = current_overlap['label'].values
+            previous_overlap = previous_overlap['label'].values
             
             if DEBUG_MEMORY: utils.memory_print('before update_overlap')
             overlap_window, label_mapping = det.update_overlap(previous_overlap, current_overlap)
@@ -59,12 +61,12 @@ def detection_tru_windows(ds, last_lbl):
             
             current_window = current_window_nc.sel(time = slice(overlap_end + timedelta(days=1),
                                                                  window_end_day))
-            current_window = current_window['mhw_label'].values
+            current_window = current_window['label'].values
             current_window = det.relabel_data_window(current_window, label_mapping)
             if DEBUG_MEMORY: utils.memory_print('after relabel_data_window')
             
             current_window = np.concatenate((overlap_window, current_window))
-            current_window_nc['mhw_label'] =  (('time', 'lat', 'lon'), current_window)
+            current_window_nc['label'] =  (('time', 'y', 'x'), current_window)
             del current_window
             if DEBUG_MEMORY: utils.memory_print('after concat window')
         
@@ -81,9 +83,10 @@ def detection_tru_windows(ds, last_lbl):
             name = f'{str1}_to_{str2}'
 
             if config.RENDER_VIDEOS:
-                utils.save_video(current_window_nc.mhw_label.values, video_folder + name + '.mp4', fps=5)
+                utils.save_video(current_window_nc.label.values, video_folder + name + '.mp4', fps=5)
 
-            utils.save_window(current_window_nc, output_folder, name + '.nc',  separate=True)
+            utils.save_window(current_window_nc, output_folder, name + '.nc', separate=True)
+            with open(config.LABEL_FILE, 'w') as f: f.write(str(last_lbl))
 
             del current_window_nc
             break
@@ -101,11 +104,13 @@ def detection_tru_windows(ds, last_lbl):
             name = f'{str1}_to_{str2}'
             
             if config.RENDER_VIDEOS:
-                utils.save_video(previous_window_save.mhw_label.values, video_folder + name + '.mp4', fps=5)
+                utils.save_video(previous_window_save.label.values, video_folder + name + '.mp4', fps=5)
             
             utils.save_window(previous_window_save, output_folder, name + '.nc',  separate=True)
             del previous_window_save
             if DEBUG_MEMORY: utils.memory_print('after saving window')
+
+            with open(config.LABEL_FILE, 'w') as f: f.write(str(last_lbl))
         
         # Find the overlapping date range
         overlap_start, overlap_end = utils.find_overlap_dates(window_start_day_prev, window_end_day_prev,
@@ -114,5 +119,6 @@ def detection_tru_windows(ds, last_lbl):
         previous_overlap = current_window_nc.sel(time = slice(overlap_start, overlap_end))
         utils.backup_overlap(output_folder, 'previous_overlap.nc', 'previous_overlap_backup.nc')
         utils.save_window(previous_overlap, output_folder, 'previous_overlap.nc',  separate=True)
+        with open(config.LABEL_FILE, 'w') as f: f.write(str(last_lbl))
         del current_window_nc
     

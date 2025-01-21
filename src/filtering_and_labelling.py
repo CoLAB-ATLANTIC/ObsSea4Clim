@@ -26,7 +26,7 @@ def get_timesteps_per_area(folder_path):
 
     cut_dates = dict() #record start, end, and cut stamps of mhws
 
-    prev_frame = dataset.sel(time=time_ds[0])['mhw_label'].values
+    prev_frame = dataset.sel(time=time_ds[0])['label'].values
     prev_unique = list(np.unique(prev_frame))
     if check_overlap: prev_unique.remove(0)
 
@@ -39,7 +39,7 @@ def get_timesteps_per_area(folder_path):
         date = utils.to_datetime(date)
         #print(date.strftime('%Y-%m-%d'))
 
-        frame = dataset.sel(time=date)['mhw_label'].values
+        frame = dataset.sel(time=date)['label'].values
 
         frame_lbls = list(np.unique(frame))
 
@@ -62,7 +62,7 @@ def get_timesteps_per_area(folder_path):
             #get the pairing count for each label and total_overlap
             label_match, total_overlap, _, _, _ = detect.get_pairing_count(prev_frame, frame, prev_unique, frame_lbls, unique_codes)
 
-            # get new end dates ########################################################
+            # get new end dates #
             for lbl, overlap_count in label_match.items():
                 # overlap condition OR mhw ended in prev_frame
                 if total_overlap[lbl]==0 or overlap_count/total_overlap[lbl] < 0.5:   #or overlap_count< min_pixels_per_frame
@@ -94,7 +94,6 @@ def get_timesteps_per_area(folder_path):
 
     if 0 in cut_dates.keys(): del cut_dates[0] #just in case
 
-    #CHECK THIS!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! WHY IS IT DIFFERENT?????
     if check_overlap: lbldates_filename = 'lbl_dates.pkl'
     else: lbldates_filename = 'lbl_dates_no_overlap.pkl'
     lbl_dates_dir = config.INTERNAL_DATA_PATH + lbldates_filename
@@ -121,7 +120,7 @@ def get_event_id(frames, start_date, end_date, serial_number, total_pixels):
     return new_dict
 
 
-def splice_and_id_events():
+def splice_and_id_events(x, y):
     lbl_dates_dir = f'{config.INTERNAL_DATA_PATH}lbl_dates_no_overlap.pkl'
     with open(lbl_dates_dir, 'rb') as f: lbl_dates = pickle.load(f)
     labels = lbl_dates.keys()
@@ -132,11 +131,13 @@ def splice_and_id_events():
     files = [folder_path + file for file in files_with_substring]
 
     dataset = xr.open_mfdataset(files, chunks={'time': 200})
-    latitudes = dataset['lat'].values
-    longitudes = dataset['lon'].values
+
+    min_pixels_time = detect.calculate_num_pixels(config.FLAGS.min_area_time, config.KM_RESOLUTION)
+    min_pixels_time = int(min_pixels_time/(config.DOWNSAMPLE_RATIO**2))
 
     serial_number = 1
-    for lbl in list(labels):
+    n_labels = len(labels)
+    for i, lbl in enumerate(list(labels)):
         start_date = utils.to_datetime(lbl_dates[lbl][0])
         for end_date in lbl_dates[lbl][1:]:
             end_date = utils.to_datetime(end_date)
@@ -146,18 +147,19 @@ def splice_and_id_events():
                 chunk = dataset.sel(time=slice(start_date, end_date))
                 time_range = chunk.time.values
                 
-                frames = chunk['mhw_label'].values; del chunk
+                frames = chunk['label'].values; del chunk
                 frames = np.where(frames!=lbl, 0, 1)
                 
                 total_pixels = np.count_nonzero(frames)
-                if total_pixels >= config.FLAGS.min_pixels_time:
-                    print(f'Event {serial_number} from label {lbl}: from {str1} to {str2}; pixels: {total_pixels}')
+                if total_pixels >= min_pixels_time:
+                    area_km = utils.compute_total_area(total_pixels, config.KM_RESOLUTION)
+                    print(f'Event {serial_number} from label {lbl} ({i+1}/{n_labels}): from {str1} to {str2}; area: {area_km:,} km²')
                     
                     event_data = get_event_id(frames, start_date, end_date, serial_number, total_pixels)
                     serial_number += 1
                     
                     event_data['time_array'] = time_range
-                    utils.save_output_nc(event_data, folder_path, latitudes, longitudes)
+                    utils.save_output_nc(event_data, folder_path, x, y)
                         
                     del event_data
                 

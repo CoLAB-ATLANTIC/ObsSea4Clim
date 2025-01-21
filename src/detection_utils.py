@@ -90,7 +90,6 @@ def update_label_for_curr_lbl(curr_lbl, count_dict, inv_unique_codes, unique_cod
     for lbl_tuple, code in unique_codes.items():
         if lbl_tuple[1] == curr_lbl and lbl_tuple[0] not in [0, curr_lbl]:  # only search for other lbl's matches with this curr_lbl
             
-            #DEBUG A VER SE FUNCIONA BEM!!
             overlay_count = get_overlay_count(count_dict, inv_unique_codes, lbl_tuple) > 0.5
 
             if count_dict[code] > best_match_count and overlay_count > 0 and (count_dict[code] / overlay_count) > 0.5:
@@ -177,20 +176,30 @@ def detect_frame_by_frame(array3d, verbose=False):
     last_lbl=1
     
     structure = config.NEIGHBOURHOOD
-    
+
+    min_pixels_frame = calculate_num_pixels(FLAGS.min_area_frame, config.KM_RESOLUTION)
+    min_pixels_time = calculate_num_pixels(FLAGS.min_area_time, config.KM_RESOLUTION)
+    min_pixels_frame = int(min_pixels_frame/(config.DOWNSAMPLE_RATIO**2))
+    min_pixels_time = int(min_pixels_time/(config.DOWNSAMPLE_RATIO**2))
+    #squared or cubed???
+
+
     prev_frame = array3d[0]
     prev_frame, _ = scp.label(prev_frame, structure)
+    prev_frame = cc3d.dust(prev_frame, threshold = min_pixels_frame, connectivity=config.CONNECTIVITY, in_place=True)
     labels.append(prev_frame)
     prev_unique = list(np.unique(prev_frame))
+
     last_lbl = max(last_lbl, max(prev_unique)+1)
     if verbose:
         cmap, norm = utils.get_colors(last_lbl)
         utils.plot_frame(prev_frame, f'frame0', cmap, norm)
     
-    n_frames=len(array3d)-1
+    #n_frames=len(array3d)-1
     for idx, curr_frame in enumerate(tqdm(array3d[1:], desc="Processing frames")):
         #print(f'frame {idx+1}/{n_frames}')
         curr_frame, _ = scp.label(curr_frame, structure)
+        curr_frame = cc3d.dust( curr_frame, threshold = min_pixels_frame, connectivity=config.CONNECTIVITY, in_place=True)
         curr_frame, last_lbl = edit_labels_faster(curr_frame, last_lbl)
         
         if verbose: utils.plot_frame(curr_frame, f'frame{idx+1} before update', cmap, norm)
@@ -203,7 +212,7 @@ def detect_frame_by_frame(array3d, verbose=False):
     del array3d
     
     labels = np.array(labels)
-    labels = cc3d.dust( labels, threshold = FLAGS.min_pixels_time, connectivity=config.CONNECTIVITY, in_place=False)
+    labels = cc3d.dust( labels, threshold = min_pixels_time, connectivity=config.CONNECTIVITY, in_place=True)
     return labels
 
 def detect_mhws_2d(array3d, lbl):
@@ -343,3 +352,24 @@ def relabel_data_window(data, label_mapping):
         if dummy_label != real_label and dummy_label in existing_lbls:
             data[data == dummy_label] = real_label
     return data
+
+
+def calculate_num_pixels(total_area, km_res):
+    """
+    Calculate the number of pixels needed to cover a given area.
+
+    Parameters:
+    - total_area (float): The total desired area in square kilometers.
+    - km_res (float): The resolution of each pixel in kilometers.
+
+    Returns:
+    - num_pixels (int): The required number of pixels.
+    """
+    # Area of each pixel
+    pixel_area = km_res ** 2
+
+    # Calculate the number of pixels
+    num_pixels = total_area / pixel_area
+
+    # Return the number of pixels as an integer
+    return int(np.ceil(num_pixels))  # Round up to ensure coverage

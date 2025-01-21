@@ -7,10 +7,12 @@ import xarray as xr
 import numpy as np
 import matplotlib.pyplot as plt
 
-from matplotlib.colors import ListedColormap, BoundaryNorm
+from absl import logging
 from datetime import datetime, timedelta
+from matplotlib.colors import ListedColormap, BoundaryNorm
 
 import src.config as config
+import dev.projections as prj
 
 def reset_folders():
     if os.path.exists(config.OUTPUT_PATH):
@@ -51,6 +53,27 @@ def parse_latlon_range(values):
         return lat_min, lat_max, lon_min, lon_max
     except ValueError as e:
         raise ValueError(f"Invalid lat/lon range: {e}")
+    
+
+def get_latlon_range_as_string(dataset):
+    """
+    Retrieves the latitude and longitude range from an xarray dataset and formats it as a string.
+
+    Parameters:
+        dataset (xarray.Dataset): The dataset containing latitude and longitude dimensions.
+
+    Returns:
+        str: A formatted string of the latitude and longitude range.
+    """
+    # Retrieve latitude and longitude ranges
+    lat_min = dataset.lat.min().item(); lat_max = dataset.lat.max().item()
+    lon_min = dataset.lon.min().item(); lon_max = dataset.lon.max().item()
+
+    # Format the string with cardinal directions
+    lat_range = f"{abs(lat_min):.0f}°{'S' if lat_min < 0 else 'N'} to {abs(lat_max):.0f}°{'S' if lat_max < 0 else 'N'}"
+    lon_range = f"{abs(lon_min):.0f}°{'W' if lon_min < 0 else 'E'} to {abs(lon_max):.0f}°{'W' if lon_max < 0 else 'E'}"
+
+    return f"{lat_range}, {lon_range}"
 
 
 def get_input_data(data_folder, start_date, end_date, latlon):
@@ -62,30 +85,44 @@ def get_input_data(data_folder, start_date, end_date, latlon):
 
     data = xr.open_mfdataset(files)#, chunks={'time': 200}
 
+    varname = config.FLAGS.varname
+    data=data[[varname]]
+
     # select time and latlon interval
     data = data.sel(time = slice(start_date, end_date))
+
+    if 'latitude' in data.coords: data = data.rename({'latitude': 'lat'})
+    if 'longitude' in data.coords: data = data.rename({'longitude': 'lon'})
+
     if latlon:
         lat_min, lat_max, lon_min, lon_max = parse_latlon_range(latlon)
         data = data.sel(lat=slice(lat_min, lat_max), lon=slice(lon_min, lon_max))
 
+    dummy_ds = xr.Dataset(coords = data.coords).drop_vars("time")
+    dummy_ds.to_netcdf(config.INTERNAL_DATA_PATH+'dummy_latlon.nc')
+    del dummy_ds
+
+    logging.info(f"Lat/Lon range: {get_latlon_range_as_string(data)}")
+    logging.info(f"Projecting from Degrees to Sinusoidal...")
+    data, x, y = prj.reproject_raster(data, varname, cell_size_km=config.KM_RESOLUTION)
+
     ratio = config.DOWNSAMPLE_RATIO
-    if ratio > 1:
-        old_shape = data.intensity.shape[1:]
+    if ratio != 1 and ratio > 0:
+        old_shape = data[varname].shape[1:]
         data = data.isel(lat=slice(0, None, ratio), lon=slice(0, None, ratio))
-        print(f'Downsampled gridded data {ratio} times: from (lat,lon) = {old_shape} to {data.intensity.shape[1:]}')
+        print(f'Downsampled gridded data {ratio} times: from (n_lat,n_lon) = {old_shape} to {data[varname].shape[1:]}')
 
-    return data
+    return data, x, y
 
 
-def quantize_data(data, min_intensity):
-
-    data = data.drop_vars('category')
-    data = xr.where((data < min_intensity) | np.isnan(data), 0, 1)
-
+def quantize_data(data, min_value):
+    data = xr.where((data < min_value) | np.isnan(data), 0, 1)
     return data.astype(np.uint8)
 
 
-def manage_last_label(reset, file_path='./data/internal/last_label.txt'):
+def manage_last_label(reset):
+    file_path = config.LABEL_FILE
+
     # Check if the file exists, if not, create it with a default value of 1
     if not os.path.exists(file_path):
         with open(file_path, 'w') as file:
@@ -105,19 +142,31 @@ def manage_last_label(reset, file_path='./data/internal/last_label.txt'):
 
 
 def adjust_label_mapping(last_lbl):
-
-    with open(config.MAPPING_FILE, 'rb') as f:
-        label_mapping = pickle.load(f)
-
     possible_lbls = list(range(last_lbl+1)) 
-    lbl_keys = list(label_mapping.keys())
-    
-    for lbl in possible_lbls:
-        if lbl not in lbl_keys:
-            label_mapping[lbl]=lbl
 
-    with open( config.MAPPING_FILE, 'wb') as outf:
-        pickle.dump(label_mapping, outf)
+    # Check if the mapping file exists
+    if not os.path.exists(config.MAPPING_FILE):
+        if last_lbl == 0: label_mapping[1]=1
+        else:
+            # Initialize the mapping file
+            label_mapping = {last_lbl: last_lbl}
+
+            for lbl in possible_lbls:
+                label_mapping[lbl]=lbl
+
+    else:
+        # Load the existing mapping file
+        with open(config.MAPPING_FILE, 'rb') as f:
+            label_mapping = pickle.load(f)
+        
+        lbl_keys = list(label_mapping.keys())
+        
+        for lbl in possible_lbls:
+            if lbl not in lbl_keys:
+                label_mapping[lbl]=lbl
+
+    with open(config.MAPPING_FILE, 'wb') as f:
+        pickle.dump(label_mapping, f)
 
 
 def to_datetime(date):
@@ -160,6 +209,13 @@ def save_window(new_chunk, folder, name='filename', separate = False):
             # Concatenate along the time dimension
             new_chunk = xr.concat([existing_dataset, new_chunk], dim='time')
             existing_dataset.close()
+
+    #save reprojected for later use
+    dummy_ds = xr.open_dataset(config.INTERNAL_DATA_PATH+'dummy_latlon.nc')
+    save_final_chunk = prj.reproject_raster_back2latlon(new_chunk.copy(), dummy_ds, 'label')
+    save_final_chunk['label'] = save_final_chunk['label'].astype(np.uint8)
+    save_final_chunk.to_netcdf(config.INTERNAL_DATA_PATH+f'Events_{name}', compute=True)
+    save_final_chunk.close()
 
     if os.path.exists(filepath): os.remove(filepath)
     new_chunk.to_netcdf(filepath, compute=True)
@@ -323,33 +379,55 @@ def plot_frame(frame, txt, cmap, norm, with_text=True):
     plt.imshow(frame, cmap=cmap, norm=norm); plt.title(txt); plt.show()
 
 
-def save_output_nc(data_dict, outpath, latitudes, longitudes):
+def save_output_nc(data_dict, outpath, x, y): 
+    varname = config.FLAGS.varname
+    dummy_ds = xr.open_dataset(config.INTERNAL_DATA_PATH+'dummy_latlon.nc')
 
-    outfolder = f'{outpath}events/'
-    os.makedirs(outfolder, exist_ok=True)
-
-    output_file = outfolder + data_dict['ID'] + '.nc'
-    
     # Create a new xarray dataset
     data_array = xr.DataArray(data_dict['Areas'].astype(np.uint8),
-                              dims=['time', 'lat', 'lon'],
+                              dims=['time', 'y', 'x'],
                               coords={'time': data_dict['time_array'],
-                                       'lat': latitudes, 'lon': longitudes})
+                                       'x': x, 'y': y})
     
-    ds = xr.Dataset({'mhw_zone': data_array,
+    ds = xr.Dataset({varname: data_array}); del data_array
+
+    ds = prj.reproject_raster_back2latlon(ds, dummy_ds, varname)
+    ds[varname] = ds[varname].astype(np.uint8)
+
+    ds = xr.Dataset({'event': ds[varname],
                           'pixel_sum': data_dict['pixel_sum'],
-                          'ID': data_dict['ID']})
+                          'ID': data_dict['ID'],
+                          'pixel_area_km': config.KM_RESOLUTION**2
+                          })
     
     # Save to a new NetCDF file
+    outfolder = f'{outpath}events/'
+    os.makedirs(outfolder, exist_ok=True)
+    output_file = outfolder + data_dict['ID'] + '.nc'
     ds.to_netcdf(output_file)
     ds.close()
 
 
-def get_serial_number(number, maximum=10_000):
-    num_digits = len(str(maximum))+1
+def get_serial_number(number, maximum = 10_000):
+    num_digits = len(str(maximum)) + 1
     serial_number = str(number).zfill(num_digits)
     return serial_number
 
 def get_month(month):
     month_name = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
     return month_name[month-1]
+
+def compute_total_area(num_pixels, side_resolution_km):
+    """
+    Compute the total occupied area in square kilometers given the number of pixels 
+    and the side resolution of each pixel.
+    
+    Parameters:
+        num_pixels (int): The total number of pixels.
+        side_resolution_km (float): The side length of each pixel in kilometers.
+    
+    Returns:
+        float: Total occupied area in square kilometers.
+    """
+    total_area = num_pixels * (side_resolution_km ** 2)
+    return total_area
