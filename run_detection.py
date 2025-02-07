@@ -22,7 +22,7 @@ def main(_):
                                FLAGS.end_date, FLAGS.latlon)
     
     logging.info(f"Quantize input data")
-    ds = utils.quantize_data(ds, FLAGS.min_intensity)
+    ds = utils.quantize_data(ds, FLAGS.min_value)
 
     last_lbl = utils.manage_last_label(FLAGS.reset_data)
 

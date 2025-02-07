@@ -1,19 +1,21 @@
-import CHANGE_THIS as impf
-
-import matplotlib.pyplot as plt
-import numpy as np
-from matplotlib.colors import ListedColormap, LinearSegmentedColormap, BoundaryNorm
-from mpl_toolkits.axes_grid1 import make_axes_locatable
-import cv2
-from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
-import warnings
 import re
-warnings.filterwarnings('ignore')
-import xarray as xr
 import os
+import cv2
+import warnings
+import numpy as np
+import pandas as pd
+import xarray as xr
+import matplotlib.pyplot as plt
+
+import video_utils as vut
+
 from scipy.ndimage import measurements
 from datetime import datetime, timedelta
-import pandas as pd
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+from matplotlib.colors import ListedColormap, LinearSegmentedColormap, BoundaryNorm
+
+warnings.filterwarnings('ignore')
 
 class VariableStorage:
     def __init__(self, mhw_zones_folder=None, mhw_intensity_folder=None, mask_fullpath=None,
@@ -35,8 +37,8 @@ def get_nc_files(vars):
     mhw = xr.open_dataset(vars.mhw_zones_folder+f'{vars.ID}.nc')
 
     time = mhw.time.values
-    first_year = impf.to_datetime(time[0]).year
-    last_year = impf.to_datetime(time[-1]).year
+    first_year = vut.to_datetime(time[0]).year
+    last_year = vut.to_datetime(time[-1]).year
     del time
 
     intensity_files = [vars.mhw_intensity_folder + f'mhw_{year}.nc' for year in range(first_year, last_year+1)]
@@ -47,8 +49,8 @@ def get_nc_files(vars):
     if 'latitude' in intensity_nc.coords: intensity_nc = intensity_nc.rename({'latitude': 'lat'})
     if 'longitude' in intensity_nc.coords: intensity_nc = intensity_nc.rename({'longitude': 'lon'})
     
-    mhw = impf.downsample_netcdf(mhw, ratio=vars.downsample_ratio)
-    intensity_nc = impf.downsample_netcdf(intensity_nc, ratio=vars.downsample_ratio)
+    mhw = vut.downsample_netcdf(mhw, ratio=vars.downsample_ratio)
+    intensity_nc = vut.downsample_netcdf(intensity_nc, ratio=vars.downsample_ratio)
     if vars.verbose: print(f'(lat, lon) size: ({len(mhw.lat.values)}, {len(mhw.lon.values)})')
     
     return mhw, intensity_nc
@@ -73,13 +75,13 @@ def extract_serial_number(filename):
 
 def get_mask_and_longhurst(vars, lat):
     mask = xr.open_dataset(vars.mask_fullpath)
-    mask = impf.downsample_netcdf(mask, ratio=vars.downsample_ratio)
+    mask = vut.downsample_netcdf(mask, ratio=vars.downsample_ratio)
     mask = mask.sel(lat=slice(lat.min(), lat.max()))
     land_flag = 2
     mask = xr.where(mask == land_flag, np.nan, 1)
     mask_values = mask.mask.values
 
-    longhurst = impf.gpd.read_file(vars.longhurst_path)
+    longhurst = vut.gpd.read_file(vars.longhurst_path)
     return mask_values, longhurst
 
 def get_color_by_label(labels):
@@ -90,6 +92,9 @@ def get_color_by_label(labels):
     num_labels = len(unique_labels)
     colors = plt.cm.viridis(np.linspace(0, 1, num_labels - 1))  # Use the 'viridis' colormap excluding zero
     colors = np.vstack(([1, 1, 1, 1], colors))  # Add white color for zero at the beginning
+
+    np.random.shuffle(colors[1:])
+
     cmap = ListedColormap(colors)
 
     # Create boundaries for norm: mid-points between labels
@@ -138,10 +143,18 @@ def add_centroid_labels(ax, data, labels, IDs, lon, lat):
     lon (numpy.ndarray): The longitude values for the x-axis.
     lat (numpy.ndarray): The latitude values for the y-axis.
     """
+    xlen = len(lon); ylen = len(lat)
+    padx = int(xlen/10); pady = int(xlen/20)
+
     for label in labels:
         mask = data == label
         if mask.any():
             y, x = measurements.center_of_mass(mask)
+
+            #so that the text doesnt get out of the plot
+            x = max(padx, x); x = min(xlen-padx, x)
+            y = max(pady, y); y = min(ylen-pady, y)
+
             lon_center = lon[int(round(x))]
             lat_center = lat[int(round(y))]
             #ax.text(lon_center, lat_center, IDs[label], color='black', ha='center', va='center', fontsize=12, weight='bold')
@@ -158,6 +171,9 @@ def add_centroid_labels(ax, data, labels, IDs, lon, lat):
 def create_plots(vars, time, mhw_data, intensity_nc, mask_values, longhurst, lat, lon, labels=None, IDs=None):
     
     cmap_intensity, binary_cmap, norm, boundaries = get_colormaps(labels)
+
+    lat_range = [10,80]
+    lon_range = [-90,70]
     
     figs=list()
     i=1
@@ -174,13 +190,13 @@ def create_plots(vars, time, mhw_data, intensity_nc, mask_values, longhurst, lat
         latlon_fontsize = 14
         subplot_fontsize = 18
         subtitle_fs = 24
-        colorbar_fs =14
+        colorbar_fs = 14
         
         contour1 = axs[0].contourf(lon, lat, intensity_frame, cmap=cmap_intensity,
                                 levels=np.arange(0, 10, 0.1))
         
         axs[0].set_xlabel('Lon', fontsize=latlon_fontsize); axs[0].set_ylabel('Lat', fontsize=latlon_fontsize)
-        axs[0].set_xlim(-90, 10); axs[0].set_ylim(10, 60)
+        axs[0].set_xlim(lon_range[0], lon_range[1]); axs[0].set_ylim(lat_range[0], lat_range[1])
         axs[0].set_title('MHW Intensity Input', fontsize=subplot_fontsize)
         longhurst.plot(ax=axs[0], edgecolor='black', facecolor='none', linewidth=0.5)
         axs[0].set_aspect('equal')
@@ -193,19 +209,18 @@ def create_plots(vars, time, mhw_data, intensity_nc, mask_values, longhurst, lat
         cbar1.set_label('$\Delta$K', fontsize=colorbar_fs)
         
         ##########   Figure2    #########################################################
-        if norm:
-            contour2 = axs[1].contourf(lon, lat, mhw_frame, levels=boundaries, cmap=binary_cmap, norm=norm)
-            add_centroid_labels(axs[1], mhw_frame, labels, IDs, lon, lat)
-        else: contour2 = axs[1].contourf(lon, lat, mhw_frame, cmap=binary_cmap)
-        
+        contour2 = axs[1].contourf(lon, lat, mhw_frame, levels=boundaries if norm else None, cmap=binary_cmap, norm=norm)
+
+        axs[1].set_facecolor("black")
         axs[1].set_xlabel('Lon', fontsize=latlon_fontsize); axs[1].set_ylabel('Lat', fontsize=latlon_fontsize)
-        axs[1].set_xlim(-90, 10); axs[1].set_ylim(10, 60)
+        axs[1].set_xlim(lon_range[0], lon_range[1]); axs[1].set_ylim(lat_range[0], lat_range[1])
         axs[1].set_title('Detected MHW Zones', fontsize=subplot_fontsize)
         longhurst.plot(ax=axs[1], edgecolor='black', facecolor='none', linewidth=0.5)
         axs[1].set_aspect('equal')
-        axs[1].set_facecolor("black")
+
+        if norm: add_centroid_labels(axs[1], mhw_frame, labels, IDs, lon, lat)
         
-        date_str = impf.to_datetime(date).strftime('%Y-%m-%d')
+        date_str = vut.to_datetime(date).strftime('%Y-%m-%d')
         fig.suptitle(f'Detected MHW: {vars.ID} ; Current Date: {date_str}', fontsize=subtitle_fs)
         
         plt.subplots_adjust(wspace=-0.1, hspace=0.0)
@@ -215,6 +230,7 @@ def create_plots(vars, time, mhw_data, intensity_nc, mask_values, longhurst, lat
         plt.close(fig) 
         
     return figs
+
 
 def create_video_frames(figs):
     frames = []
@@ -226,6 +242,7 @@ def create_video_frames(figs):
         frames.append(img_bgr)
         plt.close(fig)  # Close the figure to free memory
     return frames
+
 
 def render_video(vars, frames):
     # Parameters
@@ -241,10 +258,11 @@ def render_video(vars, frames):
     # Release VideoWriter
     out.release()
     
+
 def create_one_mhw_video(vars, labels=None, IDs=None):
     mhw, intensity_nc = get_nc_files(vars)
     
-    mhw_data = mhw.label.values
+    mhw_data = mhw.event.values
     time = mhw.time.values
     lat = mhw.lat.values; lon = mhw.lon.values
     mhw.close()

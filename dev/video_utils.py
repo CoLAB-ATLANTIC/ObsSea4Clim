@@ -1,31 +1,29 @@
-import numpy as np
 import os
-import matplotlib.pyplot as plt
-import pandas as pd
 import pickle
-import geopandas as gpd
-from pathlib import Path
-import xarray as xr
-
-import scipy.ndimage as scp
 import cc3d
+import cv2
+import re
+import math
+import time
+import psutil
+import shutil
+import numpy as np
+import pandas as pd
+import xarray as xr
+import geopandas as gpd
+import scipy.ndimage as scp
+import matplotlib.pyplot as plt
+
+from pathlib import Path
+from collections import Counter
 from shapely.geometry import Point
 from shapely.ops import unary_union
 from rasterio import Affine
+from rasterio.features import rasterize
 from typing import Optional, Union
 from pandas.plotting import table
 from datetime import datetime, timedelta
 from matplotlib.colors import ListedColormap, LinearSegmentedColormap, BoundaryNorm
-
-import cv2
-from collections import Counter
-import re
-import math
-import psutil
-import time
-import shutil
-
-#import mhw_detection2d as mhw2d
 
 class InputParameters:
     def __init__(self, **kwargs):
@@ -95,7 +93,6 @@ def affine_from_xr_ds(*, xr_dataset: [xr.Dataset]=None,
 
 
 def shape2raster_mask(shapefile, xr_dataset: xr.Dataset, all_touched: bool=True) -> np.ndarray:
-    from rasterio.features import rasterize
     
     transform = affine_from_xr_ds(xr_dataset=xr_dataset)
     width = xr_dataset.sizes['lon']; height = xr_dataset.sizes['lat']

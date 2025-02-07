@@ -51,7 +51,7 @@ def reproject_raster(ds, varname, projection=ccrs.PlateCarree(), target_projecti
     # Prepare arguments for multiprocessing
     args = [
         (ds[varname].isel(time=t).values, x_coords, y_coords, x_new_grid, y_new_grid)
-        for t in range(ds.dims['time'])
+        for t in range(ds.sizes['time'])
     ]
 
     # Use multiprocessing to process all time steps
@@ -115,7 +115,7 @@ def reproject_raster_back2latlon(ds_proj, ds_original, varname, target_projectio
     # Prepare arguments for multiprocessing
     args = [
         (ds_proj[varname].isel(time=t).values, x_new_grid, y_new_grid, x_coords, y_coords)
-        for t in range(ds_proj.dims['time'])
+        for t in range(ds_proj.sizes['time'])
     ]
 
     # Use multiprocessing to process all time steps

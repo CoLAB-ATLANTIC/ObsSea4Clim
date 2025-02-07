@@ -22,6 +22,7 @@ def detection_tru_windows(ds, last_lbl):
     window_end_day = window_start_day + window_size
 
     output_folder = config.OUTPUT_PATH
+    internal_folder = config.INTERNAL_DATA_PATH
     video_folder = config.VIDEO_FOLDER
     os.makedirs(video_folder, exist_ok=True)
 
@@ -32,9 +33,21 @@ def detection_tru_windows(ds, last_lbl):
         outpath = output_folder + 'mhw_dataset.nc'
         if os.path.exists(outpath): remove_all_files_in_folder(output_folder) """
 
+    w=1
+    n_days = (end_date - start_date).days + 1
+    n_windows = utils.compute_num_windows(n_days,
+                                           window_size.days,
+                                             step_size.days)
+
     while window_start_day < end_date:
         current_time = datetime.now().strftime('%H:%M')
-        print(f'window: {window_start_day} to {window_end_day}; last label: {last_lbl} [{current_time}]') 
+        print(f'window ({w}/{n_windows+1}): {window_start_day} to {window_end_day}; last label: {last_lbl} [{current_time}]')
+        w+=1
+
+        debug_date = datetime.strptime('2018-04-20', '%Y-%m-%d')
+        if window_start_day < debug_date < window_end_day:
+            print('debug')
+
         if DEBUG_MEMORY: utils.memory_print('cycle beginning')
 
         #detect mhws in current window
@@ -83,6 +96,7 @@ def detection_tru_windows(ds, last_lbl):
             name = f'{str1}_to_{str2}'
 
             if config.RENDER_VIDEOS:
+                print('Saving video')
                 utils.save_video(current_window_nc.label.values, video_folder + name + '.mp4', fps=5)
 
             utils.save_window(current_window_nc, output_folder, name + '.nc', separate=True)
@@ -104,6 +118,7 @@ def detection_tru_windows(ds, last_lbl):
             name = f'{str1}_to_{str2}'
             
             if config.RENDER_VIDEOS:
+                print('Saving video')
                 utils.save_video(previous_window_save.label.values, video_folder + name + '.mp4', fps=5)
             
             utils.save_window(previous_window_save, output_folder, name + '.nc',  separate=True)
@@ -117,8 +132,8 @@ def detection_tru_windows(ds, last_lbl):
                                                         window_start_day, window_end_day)
         
         previous_overlap = current_window_nc.sel(time = slice(overlap_start, overlap_end))
-        utils.backup_overlap(output_folder, 'previous_overlap.nc', 'previous_overlap_backup.nc')
-        utils.save_window(previous_overlap, output_folder, 'previous_overlap.nc',  separate=True)
+        utils.backup_overlap(internal_folder, 'previous_overlap.nc', 'previous_overlap_backup.nc')
+        utils.save_window(previous_overlap, internal_folder, 'previous_overlap.nc',  separate=True)
         with open(config.LABEL_FILE, 'w') as f: f.write(str(last_lbl))
         del current_window_nc
     

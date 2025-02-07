@@ -6,6 +6,18 @@ import cv2
 import xarray as xr
 import numpy as np
 import matplotlib.pyplot as plt
+import warnings
+
+warnings.filterwarnings(
+        "ignore", 
+        category=RuntimeWarning, 
+        message="invalid value encountered in cast"
+    )
+warnings.filterwarnings(
+    "ignore", 
+    category=RuntimeWarning, 
+    message="invalid value encountered in divide"
+)
 
 from absl import logging
 from datetime import datetime, timedelta
@@ -76,13 +88,17 @@ def get_latlon_range_as_string(dataset):
     return f"{lat_range}, {lon_range}"
 
 
-def get_input_data(data_folder, start_date, end_date, latlon):
+def get_input_data(data_path, start_date, end_date, latlon):
 
     start_year = int(datetime.strptime(start_date, '%Y-%m-%d').year)
     end_year = int(datetime.strptime(end_date, '%Y-%m-%d').year)
 
-    files = [data_folder + 'mhw_hobday_data' + f'/mhw_{year}.nc' for year in range(start_year, end_year+1)]
-
+    # THIS CAN BE AUTOMATIC, WHERE WE CHECK IF THE PATH IS A FOLDER OR A .NC FILE
+    # NO NEED FOR  SINGLE_INPUT FLAG
+    if config.FLAGS.single_input:
+        files = [data_path]
+    else:
+        files = [data_path + 'mhw_hobday_data' + f'/mhw_{year}.nc' for year in range(start_year, end_year+1)]
     data = xr.open_mfdataset(files)#, chunks={'time': 200}
 
     varname = config.FLAGS.varname
@@ -98,19 +114,20 @@ def get_input_data(data_folder, start_date, end_date, latlon):
         lat_min, lat_max, lon_min, lon_max = parse_latlon_range(latlon)
         data = data.sel(lat=slice(lat_min, lat_max), lon=slice(lon_min, lon_max))
 
+    ratio = config.DOWNSAMPLE_RATIO
+    if ratio != 1 and ratio > 0:
+        old_shape = data[varname].shape[1:]
+        data = data.isel(lat=slice(0, None, ratio), lon=slice(0, None, ratio))
+        print(f'Downsampled gridded data {ratio} times: from (n_lat,n_lon) = {old_shape} to {data[varname].shape[1:]}')
+
     dummy_ds = xr.Dataset(coords = data.coords).drop_vars("time")
     dummy_ds.to_netcdf(config.INTERNAL_DATA_PATH+'dummy_latlon.nc')
     del dummy_ds
 
     logging.info(f"Lat/Lon range: {get_latlon_range_as_string(data)}")
     logging.info(f"Projecting from Degrees to Sinusoidal...")
-    data, x, y = prj.reproject_raster(data, varname, cell_size_km=config.KM_RESOLUTION)
-
-    ratio = config.DOWNSAMPLE_RATIO
-    if ratio != 1 and ratio > 0:
-        old_shape = data[varname].shape[1:]
-        data = data.isel(lat=slice(0, None, ratio), lon=slice(0, None, ratio))
-        print(f'Downsampled gridded data {ratio} times: from (n_lat,n_lon) = {old_shape} to {data[varname].shape[1:]}')
+    kmres = config.KM_RESOLUTION*ratio
+    data, x, y = prj.reproject_raster(data, varname, cell_size_km=kmres)
 
     return data, x, y
 
@@ -185,6 +202,27 @@ def find_overlap_dates(start1, end1, start2, end2):
         return overlap_start, overlap_end
     else:
         return None, None
+    
+
+def compute_num_windows(full_window: int, small_window: int, step_size: int) -> int:
+    """
+    Compute the number of windows given the full window length, 
+    small window size, and step size.
+    
+    Parameters:
+    - full_window: Total size of the data
+    - small_window: Size of each individual window
+    - step_size: Shift between consecutive windows
+    
+    Returns:
+    - Number of windows as an integer
+    """
+    if small_window > full_window:
+        raise ValueError("Small window size must be less than or equal to the full window size.")
+    if step_size <= 0:
+        raise ValueError("Step size must be a positive integer.")
+    
+    return (full_window - small_window) // step_size + 1
 
 
 def check_consistency(existing_dataset, new_chunk):

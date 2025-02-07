@@ -13,6 +13,7 @@ import src.utils as utils
 import src.config as config
 from src.config import FLAGS
 
+
 def edit_labels(arr, lbl):
     arr=arr*-1 #so there is no confusion between the detected label integers and the integers we want to assign
     values = np.unique(arr)
@@ -22,10 +23,12 @@ def edit_labels(arr, lbl):
         arr[arr==old_lbl]=lbl; lbl+=1
     return arr, lbl
 
+
 def edit_labels_faster(arr, lbl):
     arr[arr != 0] += lbl
     lbl = arr.max()+1
     return arr, lbl
+
 
 def get_overlay_count(count_dict, inv_unique_codes, lbl_tuple):    
     overlay_count=0
@@ -35,6 +38,7 @@ def get_overlay_count(count_dict, inv_unique_codes, lbl_tuple):
             if tup[0] == lbl_tuple[0] or tup[1] == lbl_tuple[1]:
                 overlay_count+=counting
     return overlay_count
+
 
 def get_unique_code(labels1, labels2):
     # Generate unique codes for all combinations
@@ -46,6 +50,7 @@ def get_unique_code(labels1, labels2):
             unique_codes[(num1, num2)] = unique_code
             inv_unique_codes[unique_code] = (num1, num2)
     return unique_codes, inv_unique_codes
+
 
 def get_pairing_count(frame1, frame2):
     paired_array = np.vectorize(cantor_pairing)(frame1, frame2)
@@ -64,13 +69,17 @@ def get_pairing_count(frame1, frame2):
 
     return count_dict, inv_unique_codes, unique_codes, new_labels
 
-# dict of dictionairies. first keys are each curr label in unique codes.\\
-#  for each curr label, we have the lable tuples that fit the conditions \\
-# for overlap check.
-# this is only made to speed up the process. Instead of always doing a for\\
-#  cycle to find the fit lbl tuples, we run only once to have a dictionary\\
-#  which directly access to the matches
+
 def unique_codes_to_dict(unique_codes):
+    '''
+    dict of dictionairies. 
+    first keys are each curr label in unique codes.\\
+    for each curr label, we have the lable tuples that fit the conditions \\
+    for overlap check.
+    this is only made to speed up the process. Instead of always doing a for\\
+    cycle to find the fit lbl tuples, we run only once to have a dictionary\\
+    which directly accesses to the matches
+    '''
     unique_codes_dict=dict(); visited_lbls=list()
     for lbl_tuple, code in unique_codes.items():
         
@@ -81,6 +90,7 @@ def unique_codes_to_dict(unique_codes):
             visited_lbls.append(lbl_tuple[1]) 
     return unique_codes_dict
 
+
 def update_label_for_curr_lbl(curr_lbl, count_dict, inv_unique_codes, unique_codes, curr_frame):
     update_lbl = curr_lbl
     best_match_count = 0
@@ -90,7 +100,7 @@ def update_label_for_curr_lbl(curr_lbl, count_dict, inv_unique_codes, unique_cod
     for lbl_tuple, code in unique_codes.items():
         if lbl_tuple[1] == curr_lbl and lbl_tuple[0] not in [0, curr_lbl]:  # only search for other lbl's matches with this curr_lbl
             
-            overlay_count = get_overlay_count(count_dict, inv_unique_codes, lbl_tuple) > 0.5
+            overlay_count = get_overlay_count(count_dict, inv_unique_codes, lbl_tuple)
 
             if count_dict[code] > best_match_count and overlay_count > 0 and (count_dict[code] / overlay_count) > 0.5:
                 best_match_count = count_dict[code]
@@ -103,6 +113,7 @@ def update_label_for_curr_lbl(curr_lbl, count_dict, inv_unique_codes, unique_cod
         add_label = update_lbl
 
     return curr_frame, remove_label, add_label
+
 
 def parallel_modify(args_unfolded):
     N_PROCESSES=8
@@ -133,6 +144,7 @@ def parallel_modify(args_unfolded):
     if 0 not in new_labels_aux: new_labels_aux=[0]+new_labels_aux
     return final_frame, new_labels_aux
 
+
 def update_frame2d_mp(curr_frame, prev_frame, verbose = False):
     start_times={}; end_times={}
     start_times['runtime']=time.time()
@@ -156,7 +168,7 @@ def update_frame2d_mp(curr_frame, prev_frame, verbose = False):
             for lbl_tuple, code in unique_codes.items():
                 if lbl_tuple[1] == curr_lbl and lbl_tuple[0] not in [0, curr_lbl]: #only search for other lbl's matches with this curr_lbl
 
-                    overlay_count = get_overlay_count(count_dict, inv_unique_codes, lbl_tuple)>0.5 #frame1_count[lbl_tuple[0]]>0.5 
+                    overlay_count = get_overlay_count(count_dict, inv_unique_codes, lbl_tuple) #frame1_count[lbl_tuple[0]]>0.5 
 
                     if count_dict[code] > best_match_count and overlay_count>0 and (count_dict[code]/overlay_count) >0.5:
                         best_match_count = count_dict[code] 
@@ -171,6 +183,7 @@ def update_frame2d_mp(curr_frame, prev_frame, verbose = False):
 
     return curr_frame, new_labels
 
+
 def detect_frame_by_frame(array3d, verbose=False):
     labels = list()
     last_lbl=1
@@ -179,10 +192,8 @@ def detect_frame_by_frame(array3d, verbose=False):
 
     min_pixels_frame = calculate_num_pixels(FLAGS.min_area_frame, config.KM_RESOLUTION)
     min_pixels_time = calculate_num_pixels(FLAGS.min_area_time, config.KM_RESOLUTION)
-    min_pixels_frame = int(min_pixels_frame/(config.DOWNSAMPLE_RATIO**2))
-    min_pixels_time = int(min_pixels_time/(config.DOWNSAMPLE_RATIO**2))
-    #squared or cubed???
-
+    min_pixels_frame = max(1, int(min_pixels_frame/(config.DOWNSAMPLE_RATIO**2)))
+    min_pixels_time = max(5, int(min_pixels_time/(config.DOWNSAMPLE_RATIO**2)))
 
     prev_frame = array3d[0]
     prev_frame, _ = scp.label(prev_frame, structure)
@@ -198,13 +209,20 @@ def detect_frame_by_frame(array3d, verbose=False):
     #n_frames=len(array3d)-1
     for idx, curr_frame in enumerate(tqdm(array3d[1:], desc="Processing frames")):
         #print(f'frame {idx+1}/{n_frames}')
+
+        if idx==109:
+            print('debug')
+            import matplotlib.pyplot as plt
+            #verbose=True
+            cmap, norm = utils.get_colors(last_lbl)
+
         curr_frame, _ = scp.label(curr_frame, structure)
         curr_frame = cc3d.dust( curr_frame, threshold = min_pixels_frame, connectivity=config.CONNECTIVITY, in_place=True)
         curr_frame, last_lbl = edit_labels_faster(curr_frame, last_lbl)
         
-        if verbose: utils.plot_frame(curr_frame, f'frame{idx+1} before update', cmap, norm)
+        if verbose: utils.plot_frame(curr_frame, f'frame{idx+1} before update', cmap, norm); plt.savefig(f'frame{idx+1}_before_update.png'); plt.close()
         curr_frame, prev_unique = update_frame2d_mp(curr_frame, prev_frame)
-        if verbose: utils.plot_frame(curr_frame, f'frame{idx+1} after update', cmap, norm, with_text=True)
+        if verbose: utils.plot_frame(curr_frame, f'frame{idx+1} after update', cmap, norm, with_text=True); plt.savefig(f'frame{idx+1}_after_update.png'); plt.close()
 
         labels.append(curr_frame)
         prev_frame = curr_frame
@@ -215,14 +233,17 @@ def detect_frame_by_frame(array3d, verbose=False):
     labels = cc3d.dust( labels, threshold = min_pixels_time, connectivity=config.CONNECTIVITY, in_place=True)
     return labels
 
+
 def detect_mhws_2d(array3d, lbl):
     labels = detect_frame_by_frame(array3d, verbose= False)
     labels = labels.astype('uint16')
     labels, lbl = edit_labels(labels, lbl)
     return labels, lbl
 
+
 def cantor_pairing(k1, k2):
     return (k1 + k2) * (k1 + k2 + 1) // 2 + k2
+
 
 def decode_cantor(z):
     # Compute w
@@ -233,6 +254,7 @@ def decode_cantor(z):
     y = z - t
     x = w - y
     return (int(x), int(y))
+
 
 def add_tuple_to_groups(tuples, groups):
     for a, b in tuples:
@@ -255,6 +277,7 @@ def add_tuple_to_groups(tuples, groups):
         else: # If neither element is in any group, create a new group
             groups.append({a, b})
     return groups
+
 
 def update_label_mapping(label_pairing):
     if os.path.exists(config.MAPPING_FILE):
@@ -279,6 +302,7 @@ def update_label_mapping(label_pairing):
             pickle.dump(label_mapping, outf)
         
     return label_mapping
+
 
 def create_label_pairing(data1, data2):
     paired_array = np.vectorize(cantor_pairing)(data1, data2)
@@ -306,6 +330,7 @@ def create_label_pairing(data1, data2):
     label_mapping = update_label_mapping(label_pairing); del label_pairing
     #current_time = datetime.now().strftime('%H:%M'); print(f'label mapping length: {len(label_mapping)} [{current_time}]')
     return label_mapping, data1_unique, data2_unique
+
 
 # Function to relabel data based on the label mapping
 def relabel_data_overlap(data1, data2, label_mapping, data1_unique, data2_unique):
@@ -339,10 +364,12 @@ def relabel_data_overlap(data1, data2, label_mapping, data1_unique, data2_unique
         
     return relabeled_data
 
+
 def update_overlap(previous_overlap, current_overlap):
     label_mapping, data1_unique, data2_unique = create_label_pairing(previous_overlap, current_overlap)
     overlap_window = relabel_data_overlap(previous_overlap, current_overlap, label_mapping, data1_unique, data2_unique)    
     return overlap_window, label_mapping
+
 
 def relabel_data_window(data, label_mapping):
     existing_lbls=list(np.unique(data))
