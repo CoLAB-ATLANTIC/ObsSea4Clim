@@ -44,10 +44,6 @@ def detection_tru_windows(ds, last_lbl):
         print(f'window ({w}/{n_windows+1}): {window_start_day} to {window_end_day}; last label: {last_lbl} [{current_time}]')
         w+=1
 
-        debug_date = datetime.strptime('2018-04-20', '%Y-%m-%d')
-        if window_start_day < debug_date < window_end_day:
-            print('debug')
-
         if DEBUG_MEMORY: utils.memory_print('cycle beginning')
 
         #detect mhws in current window
@@ -55,7 +51,7 @@ def detection_tru_windows(ds, last_lbl):
         current_window = current_window_nc[varname].values
         
         if DEBUG_MEMORY: utils.memory_print('before detect_mhws')
-        current_window, last_lbl = det.detect_mhws_2d(current_window, last_lbl)
+        current_window, last_lbl = det.detect_mhws_2d(current_window, last_lbl, verbose = config.VERBOSE)
         current_window_nc['label'] = (('time', 'y', 'x'), current_window)
         current_window_nc = current_window_nc.drop_vars(varname)
         del current_window

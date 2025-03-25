@@ -20,6 +20,8 @@ warnings.filterwarnings(
 )
 
 from absl import logging
+from scipy.ndimage import label
+from multiprocessing import Pool
 from datetime import datetime, timedelta
 from matplotlib.colors import ListedColormap, BoundaryNorm
 
@@ -218,7 +220,7 @@ def compute_num_windows(full_window: int, small_window: int, step_size: int) -> 
     - Number of windows as an integer
     """
     if small_window > full_window:
-        raise ValueError("Small window size must be less than or equal to the full window size.")
+        return 0
     if step_size <= 0:
         raise ValueError("Step size must be a positive integer.")
     
@@ -252,6 +254,9 @@ def save_window(new_chunk, folder, name='filename', separate = False):
     dummy_ds = xr.open_dataset(config.INTERNAL_DATA_PATH+'dummy_latlon.nc')
     save_final_chunk = prj.reproject_raster_back2latlon(new_chunk.copy(), dummy_ds, 'label')
     save_final_chunk['label'] = save_final_chunk['label'].astype(np.uint8)
+    if config.FILL_HOLES:
+        save_final_chunk['label'] = apply_fill_holes_to_xr(save_final_chunk['label'],
+                                                            max_hole_size=config.FILL_HOLE_MIN, num_workers=8)
     save_final_chunk.to_netcdf(config.INTERNAL_DATA_PATH+f'Events_{name}', compute=True)
     save_final_chunk.close()
 
@@ -401,6 +406,13 @@ def get_colors(last_lbl):
     return cmap, norm
 
 
+def get_colors_binary(last_lbl):
+    cmap = ListedColormap(["darkblue", "yellow"])
+    bounds = [0, 0.00001, last_lbl]  # Small threshold to separate 0 from positives
+    norm = BoundaryNorm(bounds, cmap.N)
+    return cmap, norm
+
+
 def plot_frame(frame, txt, cmap, norm, with_text=True):
     if with_text:
         labels = list(np.unique(frame))
@@ -416,7 +428,6 @@ def plot_frame(frame, txt, cmap, norm, with_text=True):
         
     plt.imshow(frame, cmap=cmap, norm=norm); plt.title(txt); plt.show()
 
-
 def save_output_nc(data_dict, outpath, x, y): 
     varname = config.FLAGS.varname
     dummy_ds = xr.open_dataset(config.INTERNAL_DATA_PATH+'dummy_latlon.nc')
@@ -431,6 +442,9 @@ def save_output_nc(data_dict, outpath, x, y):
 
     ds = prj.reproject_raster_back2latlon(ds, dummy_ds, varname)
     ds[varname] = ds[varname].astype(np.uint8)
+    if config.FILL_HOLES:
+        ds[varname] = apply_fill_holes_to_xr(ds[varname],
+                        max_hole_size=config.FILL_HOLE_MIN,num_workers=8)
 
     ds = xr.Dataset({'event': ds[varname],
                           'pixel_sum': data_dict['pixel_sum'],
@@ -469,3 +483,58 @@ def compute_total_area(num_pixels, side_resolution_km):
     """
     total_area = num_pixels * (side_resolution_km ** 2)
     return total_area
+
+def fill_small_holes(mask, max_hole_size=10):
+    """Fills small holes (0s or spaces) inside labeled clusters while keeping IDs."""
+    
+    # Convert space (" ") to 0 for processing (if needed)
+    if mask.dtype.kind in {'U', 'S'}:  # If the array contains strings
+        mask = np.where(mask == " ", 0, mask.astype(int))
+
+    filled_mask = mask.copy()  # Copy to modify
+
+    # Identify unique cloud labels (excluding 0)
+    cloud_labels = np.unique(mask)
+    cloud_labels = cloud_labels[cloud_labels != 0]  # Ignore background
+
+    for cloud_id in cloud_labels:
+        # Create binary mask for this cloud (1 = cloud pixels, 0 = everything else)
+        cloud_mask = (mask == cloud_id)
+
+        # Identify holes (0s inside this cloud)
+        holes, num_holes = label((1 - cloud_mask).astype(int))
+
+        for hole_id in range(1, num_holes + 1):
+            hole_size = np.sum(holes == hole_id)  # Count pixels in hole
+            if hole_size <= max_hole_size:
+                filled_mask[holes == hole_id] = cloud_id  # Fill small hole with cloud ID
+
+    del mask
+    return filled_mask
+
+
+def process_timestep(args):
+    """Applies hole-filling to a single time step."""
+    mask, max_hole_size = args
+    return fill_small_holes(mask, max_hole_size)
+
+def apply_fill_holes_to_xr(ds, max_hole_size=8, num_workers=8):
+    """Apply fill_small_holes() to each time step of an xarray Dataset using multiprocessing."""
+    
+    # Convert dataset to NumPy array for processing
+    data_array = ds.values  # Shape: (time, lat, lon)
+
+    # Prepare multiprocessing pool
+    with Pool(num_workers) as pool:
+        # Process each time step in parallel
+        processed_data = pool.map(process_timestep, [(data_array[t], max_hole_size) for t in range(data_array.shape[0])])
+
+    # Convert back to xarray DataArray
+    processed_ds = xr.DataArray(
+        np.array(processed_data),  # Stack results into a 3D array
+        dims=ds.dims,
+        coords=ds.coords,
+        name=ds.name
+    )
+
+    return processed_ds

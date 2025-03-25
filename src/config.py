@@ -11,9 +11,16 @@ NEIGHBOURHOOD= [[1,1,1],
                 [1,1,1]]
 CONNECTIVITY = 6
 KM_RESOLUTION = 10 # 10kms resolution when reprojecting to sinusoidal (equal area grid)
+OVERLAP_MIN = 0.2 #from 0 to 1, how much overlap must exist between two frames to be considered the same event
 
 DOWNSAMPLE_RATIO = 1
 RENDER_VIDEOS = True
+VERBOSE = False
+
+#TODO: make this threshold variable to degree resolution instead of pixels
+FILL_HOLES = True #flag to determine if we are going to fill holes in the sinusoidal to latlon reprojection
+FILL_HOLE_MIN = 10 #maximum number of pixels to fill a hole
+
 
 # RELATIVE PATHS:
 MAPPING_FOLDER = '/home/eoserver/beatriz/JP/data/'

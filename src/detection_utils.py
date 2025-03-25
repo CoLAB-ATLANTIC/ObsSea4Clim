@@ -6,6 +6,7 @@ import time
 import pickle
 import scipy.ndimage as scp
 import multiprocessing as mp
+import matplotlib.pyplot as plt
 from collections import Counter
 from tqdm import tqdm
 
@@ -102,7 +103,7 @@ def update_label_for_curr_lbl(curr_lbl, count_dict, inv_unique_codes, unique_cod
             
             overlay_count = get_overlay_count(count_dict, inv_unique_codes, lbl_tuple)
 
-            if count_dict[code] > best_match_count and overlay_count > 0 and (count_dict[code] / overlay_count) > 0.5:
+            if count_dict[code] > best_match_count and overlay_count > 0 and (count_dict[code] / overlay_count) > config.OVERLAP_MIN:
                 best_match_count = count_dict[code]
                 update_lbl = lbl_tuple[0]
 
@@ -170,7 +171,7 @@ def update_frame2d_mp(curr_frame, prev_frame, verbose = False):
 
                     overlay_count = get_overlay_count(count_dict, inv_unique_codes, lbl_tuple) #frame1_count[lbl_tuple[0]]>0.5 
 
-                    if count_dict[code] > best_match_count and overlay_count>0 and (count_dict[code]/overlay_count) >0.5:
+                    if count_dict[code] > best_match_count and overlay_count>0 and (count_dict[code]/overlay_count) > FLAGS.OVERLAP_MIN:
                         best_match_count = count_dict[code] 
                         update_lbl = lbl_tuple[0]
             
@@ -203,26 +204,24 @@ def detect_frame_by_frame(array3d, verbose=False):
 
     last_lbl = max(last_lbl, max(prev_unique)+1)
     if verbose:
-        cmap, norm = utils.get_colors(last_lbl)
-        utils.plot_frame(prev_frame, f'frame0', cmap, norm)
+        cmap, norm = utils.get_colors_binary(last_lbl)
+        utils.plot_frame(prev_frame, f'frame0', cmap, norm); plt.savefig('frame0.png'); plt.close()
     
     #n_frames=len(array3d)-1
     for idx, curr_frame in enumerate(tqdm(array3d[1:], desc="Processing frames")):
         #print(f'frame {idx+1}/{n_frames}')
-
-        if idx==109:
-            print('debug')
-            import matplotlib.pyplot as plt
-            #verbose=True
-            cmap, norm = utils.get_colors(last_lbl)
+        #if idx==10: import sys; sys.exit()
 
         curr_frame, _ = scp.label(curr_frame, structure)
         curr_frame = cc3d.dust( curr_frame, threshold = min_pixels_frame, connectivity=config.CONNECTIVITY, in_place=True)
         curr_frame, last_lbl = edit_labels_faster(curr_frame, last_lbl)
         
-        if verbose: utils.plot_frame(curr_frame, f'frame{idx+1} before update', cmap, norm); plt.savefig(f'frame{idx+1}_before_update.png'); plt.close()
+        if verbose: 
+            #cmap, norm = utils.get_colors(last_lbl)
+            utils.plot_frame(curr_frame, f'frame{idx+1} before update', cmap, norm); plt.savefig(f'frame{idx+1}_before_update.png'); plt.close()
         curr_frame, prev_unique = update_frame2d_mp(curr_frame, prev_frame)
-        if verbose: utils.plot_frame(curr_frame, f'frame{idx+1} after update', cmap, norm, with_text=True); plt.savefig(f'frame{idx+1}_after_update.png'); plt.close()
+        if verbose: 
+            utils.plot_frame(curr_frame, f'frame{idx+1} after update', cmap, norm, with_text=True); plt.savefig(f'frame{idx+1}_after_update.png'); plt.close()
 
         labels.append(curr_frame)
         prev_frame = curr_frame
@@ -234,8 +233,8 @@ def detect_frame_by_frame(array3d, verbose=False):
     return labels
 
 
-def detect_mhws_2d(array3d, lbl):
-    labels = detect_frame_by_frame(array3d, verbose= False)
+def detect_mhws_2d(array3d, lbl, verbose = False):
+    labels = detect_frame_by_frame(array3d, verbose)
     labels = labels.astype('uint16')
     labels, lbl = edit_labels(labels, lbl)
     return labels, lbl

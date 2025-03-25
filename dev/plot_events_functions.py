@@ -73,16 +73,20 @@ def extract_serial_number(filename):
         return int(match.group(1))
     return -1  # In case no serial number is found
 
-def get_mask_and_longhurst(vars, lat):
+def get_mask_and_longhurst(vars, ref_nc):
+
+    lat_max = ref_nc.lat.max(); lat_min = ref_nc.lat.min()
+    lon_max = ref_nc.lon.max(); lon_min = ref_nc.lon.min()
+
     mask = xr.open_dataset(vars.mask_fullpath)
     mask = vut.downsample_netcdf(mask, ratio=vars.downsample_ratio)
-    mask = mask.sel(lat=slice(lat.min(), lat.max()))
+    mask = mask.sel(lat=slice(lat_min, lat_max), 
+                    lon=slice(lon_min, lon_max))
     land_flag = 2
     mask = xr.where(mask == land_flag, np.nan, 1)
-    mask_values = mask.mask.values
 
     longhurst = vut.gpd.read_file(vars.longhurst_path)
-    return mask_values, longhurst
+    return mask, longhurst
 
 def get_color_by_label(labels):
     # Define unique labels including zero
@@ -172,8 +176,8 @@ def create_plots(vars, time, mhw_data, intensity_nc, mask_values, longhurst, lat
     
     cmap_intensity, binary_cmap, norm, boundaries = get_colormaps(labels)
 
-    lat_range = [10,80]
-    lon_range = [-90,70]
+    lat_range = [lat.min(), lat.max()]
+    lon_range = [lon.min(), lon.max()]
     
     figs=list()
     i=1
@@ -257,17 +261,41 @@ def render_video(vars, frames):
 
     # Release VideoWriter
     out.release()
+
+
+def upsample_by_ref(ds, ds_ref):
+
+    # Reference high-resolution lat/lon grid (e.g., from another dataset)
+    ref_lat = ds_ref.lat.values
+    ref_lon = ds_ref.lon.values
+
+    # Interpolate to the new grid
+    ds_upscaled = ds.interp(lat=ref_lat, lon=ref_lon, method="linear")
+    return ds_upscaled
     
 
-def create_one_mhw_video(vars, labels=None, IDs=None):
+def create_one_mhw_video(vars, labels=None, IDs=None, interp=False):
     mhw, intensity_nc = get_nc_files(vars)
+
+    lat_range = [25,50]#[10,80]
+    lon_range = [0, 45]#[-90,70]
+    mhw = mhw.sel(lon = slice(lon_range[0], lon_range[1]),
+                   lat = slice(lat_range[0], lat_range[1]))
+    intensity_nc = intensity_nc.sel(lon = slice(lon_range[0], lon_range[1]),
+                   lat = slice(lat_range[0], lat_range[1]))
     
+    mask, longhurst = get_mask_and_longhurst(vars, mhw)
+
+    if interp: mhw = upsample_by_ref(mhw, mask)
+
+    mask_values = mask.mask.values
+    mask.close()
+
+    lat = mhw.lat.values; lon = mhw.lon.values
     mhw_data = mhw.event.values
     time = mhw.time.values
-    lat = mhw.lat.values; lon = mhw.lon.values
     mhw.close()
     
-    mask_values, longhurst = get_mask_and_longhurst(vars, lat)
     figs = create_plots(vars, time, mhw_data, intensity_nc,
                         mask_values, longhurst, lat, lon, labels, IDs)
     del mhw_data; del time; del lat; del lon
